@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kinetic 3D: Ramp Glide Tech</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #080810; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; user-select: none; }
+    
+    #crosshair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 6px;
+      height: 6px;
+      background: #00ffcc;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      box-shadow: 0 0 8px #00ffcc;
+      z-index: 10;
+    }
+
+    #speed-container {
+      position: absolute;
+      top: 54%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    #center-speedometer {
+      color: #00ffcc;
+      font-size: 32px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      text-shadow: 0 0 12px rgba(0, 255, 204, 0.8);
+    }
+
+    #max-speedometer {
+      color: #ff00ff;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      margin-top: 2px;
+      text-shadow: 0 0 8px rgba(255, 0, 255, 0.7);
+    }
+
+    #hud {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      color: #00ffcc;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-shadow: 0 0 10px rgba(0, 255, 204, 0.5);
+      z-index: 10;
+    }
+
+    #streak-display {
+      color: #ffcc00;
+      font-weight: 800;
+    }
+
+    #instructions {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #ffffff;
+      text-align: center;
+      background: rgba(10, 10, 25, 0.85);
+      border: 1px solid #00ffcc;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 0 20px rgba(0, 255, 204, 0.3);
+      z-index: 20;
+    }
+
+    #instructions h1 { font-size: 28px; color: #00ffcc; margin-bottom: 15px; }
+    #instructions p { font-size: 14px; margin: 6px 0; color: #ccc; }
+    #instructions ul { text-align: left; display: inline-block; margin: 15px 0; font-size: 14px; color: #fff; }
+    #instructions li { margin: 4px 0; }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+  <div id="crosshair"></div>
+  
+  <div id="speed-container">
+    <div id="center-speedometer">0.0</div>
+    <div id="max-speedometer">TOP: 0.0</div>
+  </div>
+
+  <div id="hud">
+    STATE: <span id="state-display">GROUND</span> | RAMP STREAK: <span id="streak-display">0/5</span>
+  </div>
+
+  <div id="instructions">
+    <h1>RAMP GLIDE MOVEMENT</h1>
+    <p>Click anywhere to start</p>
+    <ul>
+      <li><b>W, A, S, D</b> — Move / Air Strafe</li>
+      <li><b>SPACE</b> — Jump / Bhop</li>
+      <li><b>LEFT SHIFT</b> — Balanced Slide</li>
+      <li><b>R</b> — Reset to Spawn</li>
+      <li><b>RAMP GLIDE TECH</b> — Touch 5 consecutive ramps without hitting flat ground to launch at 500–750 speed!</li>
+    </ul>
+  </div>
+
+  <script>
+    // --- THREE.JS SCENE SETUP ---
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x080810, 0.003);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2500);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setClearColor(0x080810);
+    document.body.appendChild(renderer.domElement);
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+    const dirLight = new THREE.DirectionalLight(0x00ffcc, 0.8);
+    dirLight.position.set(50, 100, 50);
+    scene.add(dirLight);
+
+    // --- ENVIRONMENT & RAMPS ---
+    const collidableMeshes = [];
+
+    // Floor Grid
+    const floorGeo = new THREE.PlaneGeometry(3000, 3000);
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x111122, roughness: 0.8 });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.isRamp = false;
+    scene.add(floor);
+    collidableMeshes.push(floor);
+
+    const grid = new THREE.GridHelper(3000, 600, 0x00ffcc, 0x222244);
+    grid.position.y = 0.01;
+    scene.add(grid);
+
+    // Ramp Creation Function
+    function createRamp(x, z, width, length, angle, color = 0x1f2f5a) {
+      const geo = new THREE.BoxGeometry(width, 1, length);
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.3 });
+      const ramp = new THREE.Mesh(geo, mat);
+
+      ramp.position.set(x, (length * Math.sin(angle)) / 2, z);
+      ramp.rotation.x = angle;
+      ramp.isRamp = true;
+      scene.add(ramp);
+
+      const edges = new THREE.EdgesGeometry(geo);
+      const wireframe = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x00ffcc }));
+      ramp.add(wireframe);
+
+      collidableMeshes.push(ramp);
+    }
+
+    // Spawn Ramps
+    for (let i = 0; i < 50; i++) {
+      const x = (Math.random() - 0.5) * 1500;
+      const z = -Math.random() * 1500;
+      const angle = (20 + Math.random() * 20) * (Math.PI / 180);
+      createRamp(x, z, 35, 55, angle);
+    }
+
+    // --- MOVEMENT ENGINE ---
+    const keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
+    let isLocked = false;
+    let yaw = 0;
+    const pitch = 0;
+
+    // Movement Parameters
+    const MAX_GROUND_SPEED = 14.0;
+    const GROUND_ACCEL = 100.0;
+    const AIR_ACCEL = 900.0;
+    const MAX_AIR_SPEED = 30.0;
+    const FRICTION = 6.0;
+    const SLIDE_FRICTION = 0.22;
+    const GRAVITY = 32.0;
+    const JUMP_IMPULSE = 12.0;
+
+    // Player State
+    const SPAWN_POINT = new THREE.Vector3(0, 2, 0);
+    const playerPos = SPAWN_POINT.clone();
+    const velocity = new THREE.Vector3();
+    let isGrounded = false;
+    let isSliding = false;
+    let playerHeight = 2.0;
+    let currentRampBoost = 1.0;
+    let topSpeed = 0.0;
+
+    // Ramp Glide Tech Tracking
+    let rampStreak = 0;
+    let lastRampHit = null;
+
+    // Raycaster for Grounding
+    const raycaster = new THREE.Raycaster();
+    const downDirection = new THREE.Vector3(0, -1, 0);
+
+    // Controls
+    document.addEventListener('click', () => {
+      if (!isLocked) document.body.requestPointerLock();
+    });
+
+    document.addEventListener('pointerlockchange', () => {
+      isLocked = document.pointerLockElement === document.body;
+      document.getElementById('instructions').style.display = isLocked ? 'none' : 'block';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isLocked) return;
+      const sensitivity = 0.002;
+      yaw -= e.movementX * sensitivity;
+    });
+
+    function resetToSpawn() {
+      playerPos.copy(SPAWN_POINT);
+      velocity.set(0, 0, 0);
+      yaw = 0;
+      isSliding = false;
+      rampStreak = 0;
+      lastRampHit = null;
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'KeyW') keys.w = true;
+      if (e.code === 'KeyS') keys.s = true;
+      if (e.code === 'KeyA') keys.a = true;
+      if (e.code === 'KeyD') keys.d = true;
+      if (e.code === 'Space') keys.space = true;
+      if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') keys.shift = true;
+      if (e.code === 'KeyR') resetToSpawn();
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (e.code === 'KeyW') keys.w = false;
+      if (e.code === 'KeyS') keys.s = false;
+      if (e.code === 'KeyA') keys.a = false;
+      if (e.code === 'KeyD') keys.d = false;
+      if (e.code === 'Space') keys.space = false;
+      if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') keys.shift = false;
+    });
+
+    // --- PHYSICS FUNCTIONS ---
+    function applyFriction(dt, amount) {
+      const speed = velocity.length();
+      if (speed < 0.0001) return;
+      const drop = speed * amount * dt;
+      const newSpeed = Math.max(0, speed - drop);
+      velocity.multiplyScalar(newSpeed / speed);
+    }
+
+    function accelerate(wishDir, wishSpeed, accel, dt) {
+      const currentSpeed = velocity.dot(wishDir);
+      const addSpeed = wishSpeed - currentSpeed;
+      if (addSpeed <= 0) return;
+      let accelSpeed = accel * dt * wishSpeed;
+      if (accelSpeed > addSpeed) accelSpeed = addSpeed;
+      velocity.x += wishDir.x * accelSpeed;
+      velocity.z += wishDir.z * accelSpeed;
+    }
+
+    // --- GAME LOOP ---
+    let lastTime = performance.now();
+
+    function update() {
+      requestAnimationFrame(update);
+      const now = performance.now();
+      const dt = Math.min((now - lastTime) / 1000, 0.1);
+      lastTime = now;
+
+      if (!isLocked) return;
+
+      // Crouch / Shift Slide
+      let currentTargetHeight = 2.0;
+      const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+
+      if (horizontalSpeed > topSpeed) {
+        topSpeed = horizontalSpeed;
+        document.getElementById('max-speedometer').innerText = `TOP: ${topSpeed.toFixed(1)}`;
+      }
+
+      if (keys.shift) {
+        currentTargetHeight = 1.0;
+        if (isGrounded && !isSliding) {
+          isSliding = true;
+          const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw)).normalize();
+          velocity.addScaledVector(forward, 5.5);
+        }
+      } else {
+        isSliding = false;
+      }
+
+      playerHeight += (currentTargetHeight - playerHeight) * 15 * dt;
+
+      // Input Vector Calculation
+      const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+      const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+      const wishDir = new THREE.Vector3();
+
+      if (keys.w) wishDir.add(forward);
+      if (keys.s) wishDir.sub(forward);
+      if (keys.d) wishDir.add(right);
+      if (keys.a) wishDir.sub(right);
+      wishDir.normalize();
+
+      // Ground / Air Movement
+      if (isGrounded) {
+        if (isSliding) {
+          applyFriction(dt, SLIDE_FRICTION);
+          accelerate(wishDir, MAX_GROUND_SPEED * 0.2, GROUND_ACCEL * 0.2, dt);
+        } else {
+          applyFriction(dt, FRICTION);
+          accelerate(wishDir, MAX_GROUND_SPEED, GROUND_ACCEL, dt);
+        }
+
+        if (keys.space) {
+          velocity.y = JUMP_IMPULSE * currentRampBoost;
+          if (currentRampBoost > 1.1) {
+            velocity.x *= 1.15;
+            velocity.z *= 1.15;
+          }
+          isGrounded = false;
+        }
+      } else {
+        accelerate(wishDir, MAX_AIR_SPEED, AIR_ACCEL, dt);
+        velocity.y -= GRAVITY * dt;
+      }
+
+      // Update Position
+      playerPos.x += velocity.x * dt;
+      playerPos.y += velocity.y * dt;
+      playerPos.z += velocity.z * dt;
+
+      // Surface Collision / Raycast
+      raycaster.set(playerPos, downDirection);
+      const intersects = raycaster.intersectObjects(collidableMeshes);
+
+      let groundY = 0;
+      currentRampBoost = 1.0;
+
+      if (intersects.length > 0) {
+        const hit = intersects[0];
+        groundY = playerPos.y - hit.distance;
+
+        const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+        const slopeAngle = 1.0 - worldNormal.y;
+
+        // Ramp Detection Logic
+        if (hit.object.isRamp && slopeAngle > 0.05) {
+          currentRampBoost = 1.0 + (slopeAngle * 1.8);
+
+          if (lastRampHit !== hit.object) {
+            lastRampHit = hit.object;
+            rampStreak++;
+
+            // 5 CONSECUTIVE RAMP GLIDE TECH: Launch player between 500 - 750 speed
+            if (rampStreak >= 5) {
+              const boostSpeed = 500 + Math.random() * 250; // Random speed launch between 500 - 750
+              let currentDir = new THREE.Vector2(velocity.x, velocity.z);
+
+              if (currentDir.length() < 1) {
+                currentDir.set(-Math.sin(yaw), -Math.cos(yaw));
+              }
+
+              currentDir.normalize().multiplyScalar(boostSpeed);
+              velocity.x = currentDir.x;
+              velocity.z = currentDir.y;
+              velocity.y = 16.0; // High launch trajectory
+              rampStreak = 0; // Reset streak after boost trigger
+            }
+          }
+
+          if (velocity.length() > 5.0) {
+            velocity.y += slopeAngle * velocity.length() * 0.15;
+            velocity.x *= 1.01;
+            velocity.z *= 1.01;
+          }
+        } else {
+          // Reset Ramp Chain Streak upon landing on flat floor
+          if (isGrounded) {
+            rampStreak = 0;
+            lastRampHit = null;
+          }
+        }
+      }
+
+      if (playerPos.y <= groundY + playerHeight) {
+        playerPos.y = groundY + playerHeight;
+        if (velocity.y < 0) velocity.y = 0;
+        isGrounded = true;
+      } else {
+        isGrounded = false;
+      }
+
+      // Camera sync
+      camera.position.copy(playerPos);
+      camera.rotation.set(0, 0, 0);
+      camera.rotation.y = yaw;
+      camera.rotation.x = pitch;
+
+      // Dynamic FOV for warp sensation up to high speeds
+      camera.fov = 75 + Math.min(50, horizontalSpeed * 0.06);
+      camera.updateProjectionMatrix();
+
+      // UI Update
+      document.getElementById('center-speedometer').innerText = horizontalSpeed.toFixed(1);
+      document.getElementById('streak-display').innerText = `${rampStreak}/5`;
+      document.getElementById('state-display').innerText = isGrounded 
+        ? (isSliding ? 'SLIDING' : 'GROUNDED') 
+        : 'AIRBORNE';
+
+      renderer.render(scene, camera);
+    }
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    update();
+  </script>
+</body>
+</html>
